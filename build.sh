@@ -104,7 +104,7 @@ fi
 
 # --- Build Everything (@build_targets) ---------------------------------------
 cd build
-if [ -v vtk ];   then didbuild=1 && $compile ../src/vtk_main.c      $compile_link $link_os_gfx $link_render $link_os_audio $link_font_provider $out vtk;   fi
+if [ -v vtk ];   then didbuild=1 && $compile ../src/vtk/vtk_main.c      $compile_link $link_os_gfx $link_render $link_os_audio $link_font_provider $out vtk;   fi
 cd ..
 
 # --- Warn On No Builds -------------------------------------------------------
