@@ -212,17 +212,17 @@ typedef enum VTK_MeshKind
 //   VTK_AttributeKind_COUNT,
 // } VTK_AttributeKind;
 // 
-// typedef struct VTK_Attribute VTK_Attribute;
-// struct VTK_Attribute
-// {
-// };
-// 
-// typedef struct VTK_AttributeList VTK_AttributeList;
-// struct VTK_AttributeList
-// {
-//   // FIXME: ...
-//   U64 count;
-// };
+
+typedef struct VTK_AttributeList VTK_AttributeList;
+struct VTK_AttributeList
+{
+  String8 name;
+  // FIXME: assume scalar for now
+  F32 *scalars;
+  F32 max;
+  F32 min;
+  U64 count;
+};
 
 //- mesh type
 
@@ -266,6 +266,9 @@ struct VTK_Mesh
   U64 point_count;
   VTK_Cell *cells;
   U64 cell_count;
+
+  VTK_AttributeList *point_attributes;
+  U64 point_attribute_count;
 
   // FIXME: ...
   // point_data;
@@ -419,6 +422,11 @@ internal void          vtk_drawlist_build(VTK_DrawList *drawlist); /* upload buf
 
 internal VTK_Mesh *vtk_mesh_from_vtk(Arena *arena, String8 path);
 internal VTK_Mesh *vtk_mesh_from_ply(Arena *arena, String8 path);
+
+/////////////////////////////////
+//~ Loader Helper Functions
+
+internal String8 vtk_read_line(U8 **c, U8 *opl);
 
 /////////////////////////////////
 //~ Drawing

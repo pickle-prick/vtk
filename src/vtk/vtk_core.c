@@ -1,5 +1,48 @@
 #include "generated/vtk.meta.c"
 
+internal Vec4F32
+pressure_lut(F32 t)
+{
+  // Clamp 0–1
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+
+  Vec4F32 c0 = v4f32(0.0f, 0.0f, 1.0f, 1.0f); // blue
+  Vec4F32 c1 = v4f32(0.0f, 1.0f, 1.0f, 1.0f); // cyan
+  Vec4F32 c2 = v4f32(1.0f, 1.0f, 0.0f, 1.0f); // yellow
+  Vec4F32 c3 = v4f32(1.0f, 0.0f, 0.0f, 1.0f); // red
+
+  if (t < 0.33f)
+    return mix_4f32(c0, c1, t / 0.33f);
+  else if (t < 0.66f)
+    return mix_4f32(c1, c2, (t - 0.33f) / 0.33f);
+  else
+    return mix_4f32(c2, c3, (t - 0.66f) / 0.34f);
+}
+
+internal F32
+bswap_f32(F32 value)
+{
+    U8 *bytes = (U8 *)&value;
+    U8 swapped_bytes[4];
+
+    // Reverse the byte order
+    for (U64 i = 0; i < 4; i++)
+    {
+        swapped_bytes[i] = bytes[3 - i];
+    }
+
+    F32 swapped_value;
+    U8 *swapped_ptr = (U8 *)&swapped_value;
+
+    for (U64 i = 0; i < 4; i++)
+    {
+        swapped_ptr[i] = swapped_bytes[i];
+    }
+
+    return swapped_value;
+}
+
 // FIXME: testing
 internal F64
 bswap_f64(F64 value)
@@ -161,8 +204,8 @@ vtk_init(OS_Handle os_wnd, R_Handle r_wnd)
   // FIXME: TESTING
   {
     // String8 vtk_path = str8_lit("./data/cube.vtk");
-    // String8 vtk_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk");
-    String8 vtk_path = str8_lit("./data/windtunnel-003s4dbyouskfw48y2gewpn18/pressure_field_mesh.vtk");
+    String8 vtk_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk");
+    // String8 vtk_path = str8_lit("./data/windtunnel-003s4dbyouskfw48y2gewpn18/pressure_field_mesh.vtk");
     VTK_Mesh *mesh = vtk_mesh_from_vtk(arena, vtk_path);
     vtk_state->mesh = mesh;
   }
@@ -438,26 +481,18 @@ vtk_update(void)
       vertices[vertex_idx].pos = mesh->points[vertex_idx].pos;
       vertices[vertex_idx].pos.y = -vertices[vertex_idx].pos.y;
 
-      Vec4F32 color_start = colors[vertex_idx%ArrayCount(colors)];
-      Vec4F32 color_end = colors[(vertex_idx+3)%ArrayCount(colors)];
-
-      local_persist F32 t = 0.0;
-      local_persist int mul = 1;
-      local_persist F32 cycle_duration = 30000.0; // Duration in seconds for a full cycle
-
-      // Increment t with respect to frame_dt and mul, ensuring the value of t stays within 0-1
-      t += vtk_state->frame_dt * mul;
-
-      if (t >= cycle_duration) {
-        t = cycle_duration;  // Ensure t doesn't exceed the cycle duration
-        mul = -1;  // Reverse direction
-      }
-      else if (t <= 0) {
-        t = 0;  // Ensure t doesn't go below 0
-        mul = 1;  // Reverse direction
-      }
-
-      Vec4F32 color = mix_4f32(color_start, color_end, t/cycle_duration);
+      F32 off = -mesh->point_attributes[0].min;
+      F32 max = mesh->point_attributes[0].max + off;
+      F32 p = mesh->point_attributes[0].scalars[vertex_idx] + off;
+      // if(vertex_idx < vertex_count-1)
+      // {
+      //   F32 p_next = mesh->point_attributes[0].scalars[vertex_idx+1];
+      //   F32 p_curr = p + vtk_state->animation.slow_rate * 0.1 * (p-p_next);
+      //   mesh->point_attributes[0].scalars[vertex_idx] = p_curr;
+      // }
+      F32 hot_t = p/max;
+      //Vec4F32 color = mix_4f32(v4f32(0, 0, 1, 1), v4f32(1, 0, 0, 1), hot_t);
+      Vec4F32 color = pressure_lut(hot_t);
       vertices[vertex_idx].col = color;
     }
 
@@ -569,12 +604,14 @@ vtk_update(void)
       // pass_params->material_count++;
 
       // fill inst info 
-      Mat4x4F32 xform = make_translate_4x4f32(v3f32(0,-3,0));
+      Mat4x4F32 tran_xform = make_translate_4x4f32(v3f32(0,-3,0));
+      Mat4x4F32 rot_xform = mat_4x4f32_from_quat_f32(make_rotate_quat_f32(v3f32(1,0,0), 0.25));
+      Mat4x4F32 xform = mul_4x4f32(tran_xform, rot_xform);
       // Mat4x4F32 xform = mat_4x4f32(1.0);
       inst->xform = xform;
       inst->xform_inv = inverse_4x4f32(xform);
       inst->omit_light = 1;
-      inst->draw_edge = 0;
+      inst->draw_edge = 1;
       // inst->color_override = colors[inst_idx%ArrayCount(colors)];
       // inst->key 
     }
@@ -1198,7 +1235,9 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
       case VTK_MeshKind_Invalid:{}break;
       case VTK_MeshKind_PolyData:
       {
-        while(c < opl)
+        B32 points_read = 0;
+        B32 polygon_read = 0;
+        while(c < opl && (!points_read || !polygon_read))
         {
           U8 *start = c;
           for(; c < opl && *c != '\n'; c++);
@@ -1207,6 +1246,7 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
 
           if(str8_starts_with(line, str8_lit("POINTS"), 0))
           {
+            points_read = 1;
             int n = 0;
             char datatype[20] = {0};
             int nread = sscanf((char*)line.str, "%*s %d %s", &n, datatype);
@@ -1268,6 +1308,7 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
 
           if(str8_starts_with(line, str8_lit("POLYGONS"), 0))
           {
+            polygon_read = 1;
             // The cell list size is the total number of integer values required to represent the list
             int cell_list_size = 0;
             int nread = sscanf((char*)line.str, "%*s %d %d", &cell_count, &cell_list_size);
@@ -1279,9 +1320,9 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
 
             if(ascii)
             {
-              for(U64 i = 0; i < cell_count; i++)
+              for(U64 cell_idx = 0; cell_idx < cell_count; cell_idx++)
               {
-                VTK_Cell *cell = &cells[i];
+                VTK_Cell *cell = &cells[cell_idx];
 
                 // read numPoints
                 U8 *mark = c;
@@ -1371,6 +1412,7 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
                   }
                   c = head;
                   c++; // skip \n again after the bytes
+                  // FIXME: skipped too many (+2)
                 }
               }
             }
@@ -1382,8 +1424,38 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
   }
 
   // part-5(optional): dataset attributes
+  VTK_AttributeList *point_attributes = 0;
+  while(c < opl)
   {
-    // FIXME: ...
+    U8 *start = c;
+    for(; c < opl && *c != '\n'; c++);
+    U8 *end = c++;
+    String8 line = str8_range(start, end);
+    if(str8_starts_with(line, str8_lit("POINT_DATA"), 0))
+    {
+      int point_data_count = 0;
+      int nread = sscanf((char*)line.str, "%*s %d", &point_data_count);
+      AssertAlways(point_data_count == point_count);
+      // FIXME: hard-coded for now
+      vtk_read_line(&c, opl);
+      vtk_read_line(&c, opl);
+      U8 *scalar_bytes = c;
+      U64 scalar_byte_size = sizeof(float) * point_data_count;
+
+      VTK_AttributeList point_attribute = {0};
+      point_attribute.name = str8_lit("p");
+      point_attribute.count = point_data_count;
+      point_attribute.scalars = push_array(arena, F32, point_data_count);
+      for(U64 i = 0; i < point_data_count; i++)
+      {
+        float scalar = ((float*)scalar_bytes)[i];
+        float swapped = bswap_f32(scalar);
+        point_attribute.scalars[i] = swapped;
+        point_attribute.max = Max(swapped, point_attribute.max);
+        point_attribute.min = Min(swapped, point_attribute.min);
+      }
+      darray_push(arena, point_attributes, point_attribute);
+    }
   }
 
   // fill&return
@@ -1393,6 +1465,7 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
   ret->point_count = point_count;
   ret->cells = cells;
   ret->cell_count = cell_count;
+  ret->point_attributes = point_attributes;
   scratch_end(scratch);
   return ret;
 }
@@ -1401,6 +1474,19 @@ internal VTK_Mesh *
 vtk_mesh_from_ply(Arena *arena, String8 path)
 {
   NotImplemented;
+}
+
+/////////////////////////////////
+//~ Loader Helper Functions
+
+internal String8
+vtk_read_line(U8 **c, U8 *opl)
+{
+  U8 *mark = *c;
+  for(; *c < opl && **c != '\n'; (*c) = *c+1);
+  if(*c < opl) *c = *c+1;
+  String8 ret = str8_range(mark, *c);
+  return ret;
 }
 
 /////////////////////////////////
