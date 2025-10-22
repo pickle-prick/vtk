@@ -296,12 +296,87 @@ vtk_init(OS_Handle os_wnd, R_Handle r_wnd)
 }
 
 // FIXME: testing
-internal B32 
+internal void 
 vtk_update(void)
 {
-  B32 window_should_close = 0;
   // camera control
   {
+    VTK_Camera *camera = &vtk_state->camera;
+    if(vtk_state->sig.f & UI_SignalFlag_LeftDragging)
+    {
+      Vec2F32 delta = ui_drag_delta();
+    }
+
+    Vec3F32 f = {0};
+    Vec3F32 s = {0};
+    Vec3F32 u = {0};
+    Mat4x4F32 rot_mat = mat_4x4f32_from_quat_f32(camera->rotation);
+    s = v3f32(rot_mat.v[0][0], rot_mat.v[0][1], rot_mat.v[0][2]); // i
+    u = v3f32(rot_mat.v[1][0], rot_mat.v[1][1], rot_mat.v[1][2]); // j
+    f = v3f32(rot_mat.v[2][0], rot_mat.v[2][1], rot_mat.v[2][2]); // k
+
+    typedef struct VTK_CameraDragData VTK_CameraDragData;
+    struct VTK_CameraDragData
+    {
+      Vec3F32 drag_start_position;
+      QuatF32 drag_start_rotation;
+    };
+
+    if(vtk_state->sig.f & UI_SignalFlag_MiddleDragging)
+    {
+      if(vtk_state->sig.f & UI_SignalFlag_MiddlePressed)
+      {
+        VTK_CameraDragData drag = {camera->position, camera->rotation};
+        ui_store_drag_struct(&drag);
+      }
+      VTK_CameraDragData drag = *ui_get_drag_struct(VTK_CameraDragData);
+      Vec2F32 delta = ui_drag_delta();
+
+      // TODO: how to scale the moving distance
+      F32 h_speed_per_screen_px = 4./vtk_state->window_dim.x;
+      F32 h_pct = -delta.x * h_speed_per_screen_px;
+      Vec3F32 h_dist = scale_3f32(s, h_pct);
+
+      F32 v_speed_per_screen_px = 4./vtk_state->window_dim.y;
+      F32 v_pct = -delta.y * v_speed_per_screen_px;
+      Vec3F32 v_dist = scale_3f32(u, v_pct);
+
+      Vec3F32 position = drag.drag_start_position;
+      position = add_3f32(position, h_dist);
+      position = add_3f32(position, v_dist);
+      camera->position = position;
+    }
+
+    if(vtk_state->sig.f & UI_SignalFlag_RightDragging)
+    {
+      if(vtk_state->sig.f & UI_SignalFlag_RightPressed)
+      {
+        VTK_CameraDragData drag = {camera->position, camera->rotation};
+        ui_store_drag_struct(&drag);
+      }
+      VTK_CameraDragData drag = *ui_get_drag_struct(VTK_CameraDragData);
+      Vec2F32 delta = ui_drag_delta();
+
+      F32 h_turn = -delta.x * (1.f) * (1.f/vtk_state->window_dim.x);
+      F32 v_turn = -delta.y * (0.5f) * (1.f/vtk_state->window_dim.y);
+
+      QuatF32 rotation = drag.drag_start_rotation;
+      QuatF32 h_q = make_rotate_quat_f32(v3f32(0,-1,0), h_turn);
+      rotation = mul_quat_f32(h_q, rotation);
+
+      Vec3F32 side = mul_quat_f32_v3f32(rotation, v3f32(1,0,0));
+      QuatF32 v_q = make_rotate_quat_f32(side, v_turn);
+      rotation = mul_quat_f32(v_q, rotation);
+
+      camera->rotation = rotation;
+    }
+
+    // Scroll
+    if(vtk_state->sig.scroll.x != 0 || vtk_state->sig.scroll.y != 0)
+    {
+      Vec3F32 dist = scale_3f32(f, -vtk_state->sig.scroll.y/3.f);
+      camera->position = add_3f32(dist, camera->position);
+    }
   }
 
   // FIXME: what?
@@ -371,10 +446,19 @@ vtk_update(void)
   // drawing
   DR_BucketScope(vtk_state->bucket_main)
   {
-    Vec3F32 eye = {3, -9, -3};
+    // camera
+#if 0
+    // Vec3F32 eye = {3, -9, -3};
+    // Mat4x4F32 view_mat = make_look_at_vulkan_4x4f32(eye, v3f32(0,0,0), v3f32(0,-1,0));
+#else
+    VTK_Camera *camera = &vtk_state->camera;
+    Mat4x4F32 rot_mat = mat_4x4f32_from_quat_f32(camera->rotation);
+    Mat4x4F32 tran_mat = make_translate_4x4f32(camera->position);
+    Mat4x4F32 view_mat = inverse_4x4f32(mul_4x4f32(tran_mat, rot_mat));
+#endif
+
     Rng2F32 viewport = vtk_state->window_rect;
     Vec2F32 viewport_dim = dim_2f32(viewport);
-    Mat4x4F32 view_mat = make_look_at_vulkan_4x4f32(eye, v3f32(0,0,0), v3f32(0,-1,0));
     Mat4x4F32 proj_mat = make_perspective_vulkan_4x4f32(0.25, viewport_dim.x/viewport_dim.y, 0.1, 100);
     R_PassParams_Geo3D *pass_params = dr_geo3d_begin(viewport, view_mat, proj_mat);
     pass_params->omit_light = 1;
@@ -415,8 +499,6 @@ vtk_update(void)
       // inst->key 
     }
   }
-
-  return window_should_close;
 }
 
 internal B32
@@ -700,8 +782,13 @@ vtk_frame(void)
     ui_push_palette(vtk_ui_palette_from_code(VTK_PaletteCode_Base));
   }
 
+  ui_set_next_rect(vtk_state->window_rect);
+  UI_Box *game_overlay = ui_build_box_from_string(UI_BoxFlag_MouseClickable|UI_BoxFlag_ClickToFocus|UI_BoxFlag_Scroll|UI_BoxFlag_DisableFocusOverlay, str8_lit("###game_overlay"));
+  // NOTE(k): ui should happend before this
+  vtk_state->sig = ui_signal_from_box(game_overlay);
+
   // FIXME: testing
-  vtk_state->window_should_close = vtk_update();
+  vtk_update();
 
   /////////////////////////////////
   //~ Cook UI drawing bucket
@@ -887,7 +974,7 @@ vtk_drawlist_push(Arena *arena, VTK_DrawList *drawlist, R_Geo3D_Vertex *vertices
   U64 v_buf_size = sizeof(R_Geo3D_Vertex) * vertex_count;
   U64 i_buf_size = sizeof(U32) * indice_count;
 
-  // TODO(XXX): we should use buffer block, we can't just release/realloc a new buffer, since the buffer handle is already handled over to RK_DrawNode
+  // TODO(XXX): we should use buffer block, we can't just release/realloc a new buffer, since the buffer handle is already handled over to VTK_DrawNode
   AssertAlways(v_buf_size + drawlist->vertex_buffer_cmt <= drawlist->vertex_buffer_cap);
   AssertAlways(i_buf_size + drawlist->indice_buffer_cmt <= drawlist->indice_buffer_cap);
 

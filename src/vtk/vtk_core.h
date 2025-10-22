@@ -195,6 +195,34 @@ typedef enum VTK_MeshKind
   VTK_MeshKind_PolyData,
 } VTK_MeshKind;
 
+//- attribute
+
+// The Visualization Toolkit supports the following dataset attributes:
+//   scalars (one to four components)
+//   vectors
+//   normals
+//   texture coordinates (1D, 2D, and 3D)
+//   tensors
+//   field data. In addition, a lookup table using the RGBA color specification, associated with the scalar data, can be defined as well. Dataset attributes are supported for both points and cells.
+typedef enum VTK_AttributeKind
+{
+  VTK_AttributeKind_Scalar,
+  VTK_AttributeKind_Vector,
+  VTK_AttributeKind_Tensor,
+  VTK_AttributeKind_COUNT,
+} VTK_AttributeKind;
+typedef struct VTK_Attribute VTK_Attribute;
+struct VTK_Attribute
+{
+};
+
+typedef struct VTK_AttributeList VTK_AttributeList;
+struct VTK_AttributeList
+{
+  // FIXME: ...
+  U64 count;
+};
+
 //- mesh type
 
 // FIXME ...
@@ -256,6 +284,7 @@ struct VTK_State
   R_Handle r_wnd;
   OS_Handle os_wnd;
   UI_EventList *events;
+  UI_Signal sig;
 
   // drawing buckets
   DR_Bucket *bucket_ui;
