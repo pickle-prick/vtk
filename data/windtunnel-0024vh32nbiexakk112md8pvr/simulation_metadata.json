@@ -1,0 +1,17 @@
+{
+    "id": "0024vh32nbiexakk112md8pvr",
+    "object_file": "object_935.obj",
+    "wind_speed": 45,
+    "rotate_angle": 180,
+    "num_iterations": 300,
+    "resolution": 5,
+    "drag_coefficient": 0.5049565,
+    "moment_coefficient": 0.1750541,
+    "lift_coefficient": 0.2653592,
+    "front_lift_coefficient": 0.3077338,
+    "rear_lift_coefficient": -0.04237452,
+    "input_mesh_path": "data/test/0024vh32nbiexakk112md8pvr/input_mesh.obj",
+    "openfoam_mesh_path": "data/test/0024vh32nbiexakk112md8pvr/openfoam_mesh.obj",
+    "pressure_field_mesh_path": "data/test/0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk",
+    "streamlines_mesh_path": "data/test/0024vh32nbiexakk112md8pvr/streamlines_mesh.ply"
+}

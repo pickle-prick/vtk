@@ -1,5 +1,30 @@
 #include "generated/vtk.meta.c"
 
+// FIXME: testing
+internal F64
+bswap_f64(F64 value)
+{
+  U8 *bytes = (uint8_t *)&value;  // Cast to byte array
+  U8 swapped_bytes[8];
+
+  // Swap the bytes (endian conversion)
+  for(U64 i = 0; i < 8; i++)
+  {
+    swapped_bytes[i] = bytes[7 - i];  // Reverse the byte order
+  }
+
+  F64 swapped_value;
+  U8 *swapped_ptr = (U8 *)&swapped_value;
+
+  // Copy swapped bytes back into swapped_value
+  for(U64 i = 0; i < 8; i++)
+  {
+    swapped_ptr[i] = swapped_bytes[i];
+  }
+
+  return swapped_value;
+}
+
 /////////////////////////////////
 //~ Basic Type Functions
 
@@ -130,12 +155,14 @@ vtk_init(OS_Handle os_wnd, R_Handle r_wnd)
   for(U64 i = 0; i < ArrayCount(vtk_state->drawlists); i++)
   {
     // NOTE(k): some device offers 256MB memory which is both cpu visiable and device local
-    vtk_state->drawlists[i] = vtk_drawlist_alloc(arena, MB(16), MB(16));
+    vtk_state->drawlists[i] = vtk_drawlist_alloc(arena, MB(32), MB(32));
   }
 
   // FIXME: TESTING
   {
-    String8 vtk_path = str8_lit("./data/cube.vtk");
+    // String8 vtk_path = str8_lit("./data/cube.vtk");
+    // String8 vtk_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk");
+    String8 vtk_path = str8_lit("./data/windtunnel-003s4dbyouskfw48y2gewpn18/pressure_field_mesh.vtk");
     VTK_Mesh *mesh = vtk_mesh_from_vtk(arena, vtk_path);
     vtk_state->mesh = mesh;
   }
@@ -410,10 +437,32 @@ vtk_update(void)
     {
       vertices[vertex_idx].pos = mesh->points[vertex_idx].pos;
       vertices[vertex_idx].pos.y = -vertices[vertex_idx].pos.y;
-      vertices[vertex_idx].col = colors[vertex_idx%3];
+
+      Vec4F32 color_start = colors[vertex_idx%ArrayCount(colors)];
+      Vec4F32 color_end = colors[(vertex_idx+3)%ArrayCount(colors)];
+
+      local_persist F32 t = 0.0;
+      local_persist int mul = 1;
+      local_persist F32 cycle_duration = 30000.0; // Duration in seconds for a full cycle
+
+      // Increment t with respect to frame_dt and mul, ensuring the value of t stays within 0-1
+      t += vtk_state->frame_dt * mul;
+
+      if (t >= cycle_duration) {
+        t = cycle_duration;  // Ensure t doesn't exceed the cycle duration
+        mul = -1;  // Reverse direction
+      }
+      else if (t <= 0) {
+        t = 0;  // Ensure t doesn't go below 0
+        mul = 1;  // Reverse direction
+      }
+
+      Vec4F32 color = mix_4f32(color_start, color_end, t/cycle_duration);
+      vertices[vertex_idx].col = color;
     }
 
-    for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx++)
+#if 0
+    for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx+=15)
     {
       VTK_Cell *cell = &mesh->cells[cell_idx];
 
@@ -433,11 +482,42 @@ vtk_update(void)
         indices[indice_idx++] = c;
       }
 
-      VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), vertices, vertex_count, indices, indice_count);
-      // draw_node->topology = R_GeoTopologyKind_TriangleStrip;
-      draw_node->topology = R_GeoTopologyKind_Triangles;
-      draw_node->polygon = R_GeoPolygonKind_Fill;
+      // FIXME: hack for now
+      {
+        R_Geo3D_Vertex *this_vertices = cell_idx == 0 ? vertices : 0;
+        U64 this_vertex_count = cell_idx == 0 ? vertex_count : 0;
+        VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), this_vertices, this_vertex_count, indices, indice_count);
+        // draw_node->topology = R_GeoTopologyKind_TriangleStrip;
+        draw_node->topology = R_GeoTopologyKind_Triangles;
+        draw_node->polygon = R_GeoPolygonKind_Fill;
+      }
     }
+#else
+    U32 *indices = 0;
+    for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx++)
+    {
+      VTK_Cell *cell = &mesh->cells[cell_idx];
+
+      // indice
+      U64 indice_count = (cell->point_count-2)*3;
+      // polygon to triangles
+      for(U64 i = 0; i < (cell->point_count-2); i++)
+      {
+        U32 a = cell->point_indices[0];
+        U32 b = cell->point_indices[i + 1];
+        U32 c = cell->point_indices[i + 2];
+        darray_push(vtk_frame_arena(), indices, a);
+        darray_push(vtk_frame_arena(), indices, b);
+        darray_push(vtk_frame_arena(), indices, c);
+      }
+    }
+
+    VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), vertices, vertex_count, indices, darray_size(indices));
+    // draw_node->topology = R_GeoTopologyKind_TriangleStrip;
+    draw_node->topology = R_GeoTopologyKind_Triangles;
+    draw_node->polygon = R_GeoPolygonKind_Fill;
+
+#endif
 #endif
   }
 
@@ -495,7 +575,7 @@ vtk_update(void)
       inst->xform_inv = inverse_4x4f32(xform);
       inst->omit_light = 1;
       inst->draw_edge = 0;
-      inst->color_override = colors[inst_idx%ArrayCount(colors)];
+      // inst->color_override = colors[inst_idx%ArrayCount(colors)];
       // inst->key 
     }
   }
@@ -1137,14 +1217,52 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
               points = push_array(arena, VTK_Point, point_count);
             }
 
-            for(U64 i = 0; i < point_count; i++)
+            if(ascii)
             {
-              U8 *start = c;
-              for(; c < opl && *c != '\n'; c++);
-              U8 *end = c++;
-              String8 line = str8_range(start, end);
-              VTK_Point *point = &points[i];
-              int nread = sscanf((char*)line.str, "%f %f %f", &point->pos.x, &point->pos.y, &point->pos.z);
+              for(U64 i = 0; i < point_count; i++)
+              {
+                U8 *start = c;
+                for(; c < opl && *c != '\n'; c++);
+                U8 *end = c++;
+                String8 line = str8_range(start, end);
+                VTK_Point *point = &points[i];
+                int nread = sscanf((char*)line.str, "%f %f %f", &point->pos.x, &point->pos.y, &point->pos.z);
+              }
+            }
+
+            if(binary)
+            {
+              U64 element_bytes = 0;
+              B32 is_float = 0;
+              B32 is_double = 0;
+              if(str8_match(str8_cstring(datatype), str8_lit("float"), 0))  {element_bytes = sizeof(float); is_float = 1;}
+              if(str8_match(str8_cstring(datatype), str8_lit("double"), 0)) {element_bytes = sizeof(double); is_double = 1;}
+              U8 *bytes = c;
+              U64 bytes_to_read = element_bytes * 3 * point_count;
+              // binary data must immediately follow the newline character (\n) from the previous ASCII keyword and parameter sequence.
+              c += (bytes_to_read+1); // skip one more \n
+              AssertAlways(is_float || is_double); // FIXME: ...
+              for(U64 point_idx = 0; point_idx < point_count; point_idx++)
+              {
+                VTK_Point *point = &points[point_idx];
+                U8 *head = bytes + point_idx*element_bytes*3;
+
+                if(is_float)
+                {
+                  float *f = (float*)head;
+                  point->pos.x = f[0];
+                  point->pos.y = f[1];
+                  point->pos.z = f[2];
+                }
+                else if(is_double)
+                {
+                  double *d = (double*)head;
+                  // FIXME: why, for the love of god, we need to swap???
+                  point->pos.x = bswap_f64(d[0]);
+                  point->pos.y = bswap_f64(d[1]);
+                  point->pos.z = bswap_f64(d[2]);
+                }
+              }
             }
           }
 
@@ -1159,27 +1277,101 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
               cells = push_array(arena, VTK_Cell, cell_count);
             }
 
-            for(U64 i = 0; i < cell_count; i++)
+            if(ascii)
             {
-              VTK_Cell *cell = &cells[i];
-
-              // read numPoints
-              U8 *mark = c;
-              for(; !char_is_space(*c); c++);
-              U64 point_count = u64_from_str8(str8_range(mark, c++), 10);
-
-              // alloc indices
-              cell->point_indices = push_array(arena, U32, point_count);
-              cell->point_count = point_count;
-
-              // read point indices
-              for(U64 point_idx = 0; point_idx < point_count; point_idx++)
+              for(U64 i = 0; i < cell_count; i++)
               {
-                mark = c;
+                VTK_Cell *cell = &cells[i];
+
+                // read numPoints
+                U8 *mark = c;
                 for(; !char_is_space(*c); c++);
-                String8 idx_str = str8_range(mark, c++);
-                U64 point_indice = u64_from_str8(idx_str, 10);
-                cell->point_indices[point_idx] = point_indice;
+                U64 point_count = u64_from_str8(str8_range(mark, c++), 10);
+
+                // alloc indices
+                cell->point_indices = push_array(arena, U32, point_count);
+                cell->point_count = point_count;
+
+                // read point indices
+                for(U64 point_idx = 0; point_idx < point_count; point_idx++)
+                {
+                  mark = c;
+                  for(; !char_is_space(*c); c++);
+                  String8 idx_str = str8_range(mark, c++);
+                  U64 point_indice = u64_from_str8(idx_str, 10);
+                  cell->point_indices[point_idx] = point_indice;
+                }
+              }
+            }
+            else if(binary)
+            {
+              // read offsets
+              U64 *offsets = push_array(scratch.arena, U64, cell_count);
+              {
+                U8 *mark = c;
+                for(; *c != '\n'; c++);
+                String8 line = str8_range(mark, c++);
+                if(str8_starts_with(line, str8_lit("OFFSETS"), 0))
+                {
+                  char datatype[20];
+                  sscanf((char*)line.str, "%*s %s", datatype);
+                  B32 is_i32 = 0;
+                  B32 is_i64 = 0;
+                  if(str8_match(str8_cstring(datatype), str8_lit("vtktypeint64"), 0)) is_i64 = 1;
+                  if(str8_match(str8_cstring(datatype), str8_lit("vtktypeint32"), 0)) is_i32 = 1;
+                  AssertAlways(is_i32 || is_i64); // FIXME: ...
+                  U64 element_bytes = is_i32 ? sizeof(S32) : sizeof(S64);
+                  U64 offsets_byte_size = element_bytes * cell_count;
+                  U8 *offsets_bytes = c;
+                  c += (offsets_byte_size+1);
+                  for(U64 cell_idx = 0; cell_idx < cell_count; cell_idx++)
+                  {
+                    // FIXME: not handling u32, test for now
+                    U64 test = ((U64*)offsets_bytes)[cell_idx];
+                    test = bswap_u64(test);
+                    offsets[cell_idx] = test;
+                    // MemoryCopy(&offsets[cell_idx], &offsets_bytes[cell_idx*element_bytes], element_bytes);
+                  }
+                }
+              }
+
+              // read indices
+              {
+                U8 *mark = c;
+                for(; *c != '\n'; c++);
+                String8 line = str8_range(mark, c++);
+                if(str8_starts_with(line, str8_lit("CONNECTIVITY"), 0))
+                {
+                  char datatype[20];
+                  sscanf((char*)line.str, "%*s %s", datatype);
+                  B32 is_i32 = 0;
+                  B32 is_i64 = 0;
+                  if(str8_match(str8_cstring(datatype), str8_lit("vtktypeint64"), 0)) is_i64 = 1;
+                  if(str8_match(str8_cstring(datatype), str8_lit("vtktypeint32"), 0)) is_i32 = 1;
+                  AssertAlways(is_i32 || is_i64); // FIXME: ...
+                  U64 element_bytes = is_i32 ? sizeof(S32) : sizeof(S64);
+                  U64 indice_read = 0;
+                  U8 *head = c;
+                  for(U64 cell_idx = 0; cell_idx < cell_count; cell_idx++)
+                  {
+                    // U64 offset = offsets[cell_idx];
+                    // FIXME: the offsets[0] is 0 which is weird, assume 3 for now
+                    VTK_Cell *cell = &cells[cell_idx];
+                    cell->point_indices = push_array(arena, U32, 3);
+                    cell->point_count = 3;
+                    for(U64 i = 0; i < 3; i++)
+                    {
+                      // FIXME: don't care about s32 for now, make it work most
+                      U64 indice = *((U64*)head);
+                      indice = bswap_u64(indice);
+                      cell->point_indices[i] = indice;
+                      head += sizeof(S64);
+                      indice_read++;
+                    }
+                  }
+                  c = head;
+                  c++; // skip \n again after the bytes
+                }
               }
             }
           }
@@ -1191,6 +1383,7 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
 
   // part-5(optional): dataset attributes
   {
+    // FIXME: ...
   }
 
   // fill&return
