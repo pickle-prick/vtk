@@ -203,10 +203,16 @@ vtk_init(OS_Handle os_wnd, R_Handle r_wnd)
   // FIXME: TESTING
   {
     // String8 vtk_path = str8_lit("./data/cube.vtk");
-    String8 vtk_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk");
-    // String8 vtk_path = str8_lit("./data/windtunnel-003s4dbyouskfw48y2gewpn18/pressure_field_mesh.vtk");
-    VTK_Mesh *mesh = vtk_mesh_from_vtk(arena, vtk_path);
-    vtk_state->mesh = mesh;
+    String8 car_vtk_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/pressure_field_mesh.vtk");
+    String8 wind_ply_path = str8_lit("./data/windtunnel-0024vh32nbiexakk112md8pvr/streamlines_mesh.ply");
+    VTK_Mesh car_mesh = vtk_mesh_from_vtk(arena, car_vtk_path);
+    car_mesh.vertices = vtk_vertices_from_mesh(arena, &car_mesh);
+    car_mesh.indices = vtk_indices_from_mesh(arena, &car_mesh);
+    VTK_Mesh wind_mesh = vtk_mesh_from_ply(arena, wind_ply_path);
+    wind_mesh.vertices = vtk_vertices_from_mesh(arena, &wind_mesh);
+    wind_mesh.indices = vtk_indices_from_mesh(arena, &wind_mesh);
+    darray_push(vtk_state->arena, vtk_state->meshes, car_mesh);
+    darray_push(vtk_state->arena, vtk_state->meshes, wind_mesh);
   }
 
   // Settings
@@ -368,6 +374,7 @@ vtk_init(OS_Handle os_wnd, R_Handle r_wnd)
 internal void 
 vtk_update(void)
 {
+  ProfBeginFunction();
   // camera control
   {
     VTK_Camera *camera = &vtk_state->camera;
@@ -479,87 +486,34 @@ vtk_update(void)
     }
   }
 
-  // FIXME: what?
-  VTK_Mesh *mesh = vtk_state->mesh;
-  // Vec4F32 colors[6] = {v4f32(1,0,0,1), v4f32(0,1,0,1), v4f32(0,0,1,1)};
-  Vec4F32 colors[6] = {
-    v4f32(1.0f, 0.0f, 0.0f, 1.0f),  // Red
-    v4f32(0.0f, 1.0f, 0.0f, 1.0f),  // Green
-    v4f32(0.0f, 0.0f, 1.0f, 1.0f),  // Blue
-    v4f32(1.0f, 1.0f, 0.0f, 1.0f),  // Yellow
-    v4f32(1.0f, 0.0f, 1.0f, 1.0f),  // Magenta
-    v4f32(0.0f, 1.0f, 1.0f, 1.0f),  // Cyan
-  };
+
+  // upload mesh
+  for(U64 mesh_idx = 0; mesh_idx < darray_size(vtk_state->meshes); mesh_idx++)
   {
+    VTK_Mesh *mesh = &vtk_state->meshes[mesh_idx];
 #if 0
-    R_Geo3D_Vertex *vertices = push_array(vtk_frame_arena(), R_Geo3D_Vertex, 3);
-    vertices[0] = (R_Geo3D_Vertex){.pos = v3f32(0,0,0), .nor = v3f32(0,0,0), .col = v4f32(1,0,0,1)};
-    vertices[1] = (R_Geo3D_Vertex){.pos = v3f32(1,0,0), .nor = v3f32(0,0,0), .col = v4f32(0,0,1,1)};
-    vertices[2] = (R_Geo3D_Vertex){.pos = v3f32(0,-1,0), .nor = v3f32(0,0,0), .col = v4f32(0,1,0,1)};
-    U64 vertex_count = 3;
-    U32 *indices = push_array(vtk_frame_arena(), U32, 3);
-    indices[0] = 0;
-    indices[1] = 1;
-    indices[2] = 2;
-    U64 indice_count = 3;
-#else
     // vertex
     U64 vertex_count = mesh->point_count;
     R_Geo3D_Vertex *vertices = push_array(vtk_frame_arena(), R_Geo3D_Vertex, vertex_count);
-    for(U64 vertex_idx = 0; vertex_idx < vertex_count; vertex_idx++)
+    ProfScope("collect vertices") for(U64 vertex_idx = 0; vertex_idx < vertex_count; vertex_idx++)
     {
       vertices[vertex_idx].pos = mesh->points[vertex_idx].pos;
       vertices[vertex_idx].pos.y = -vertices[vertex_idx].pos.y;
 
-      F32 off = -mesh->point_attributes[0].min;
-      F32 max = mesh->point_attributes[0].max + off;
-      F32 p = mesh->point_attributes[0].scalars[vertex_idx] + off;
-      // if(vertex_idx < vertex_count-1)
-      // {
-      //   F32 p_next = mesh->point_attributes[0].scalars[vertex_idx+1];
-      //   F32 p_curr = p + vtk_state->animation.slow_rate * 0.1 * (p-p_next);
-      //   mesh->point_attributes[0].scalars[vertex_idx] = p_curr;
-      // }
-      F32 hot_t = p/max;
-      //Vec4F32 color = mix_4f32(v4f32(0, 0, 1, 1), v4f32(1, 0, 0, 1), hot_t);
-      Vec4F32 color = pressure_lut(hot_t);
+      Vec4F32 color = {1,1,1,0.5};
+      if(mesh->point_attributes)
+      {
+        F32 off = -mesh->point_attributes[0].min;
+        F32 max = mesh->point_attributes[0].max + off;
+        F32 p = mesh->point_attributes[0].scalars[vertex_idx] + off;
+        F32 hot_t = p/max;
+        color = pressure_lut(hot_t);
+      }
       vertices[vertex_idx].col = color;
     }
 
-#if 0
-    for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx+=15)
-    {
-      VTK_Cell *cell = &mesh->cells[cell_idx];
-
-      // indice
-      U64 indice_count = (cell->point_count-2)*3;
-      U32 *indices = push_array(vtk_frame_arena(), U32, indice_count);
-      U32 indice_idx = 0;
-
-      // polygon to triangles
-      for(U64 i = 0; i < (cell->point_count-2); i++)
-      {
-        U32 a = cell->point_indices[0];
-        U32 b = cell->point_indices[i + 1];
-        U32 c = cell->point_indices[i + 2];
-        indices[indice_idx++] = a;
-        indices[indice_idx++] = b;
-        indices[indice_idx++] = c;
-      }
-
-      // FIXME: hack for now
-      {
-        R_Geo3D_Vertex *this_vertices = cell_idx == 0 ? vertices : 0;
-        U64 this_vertex_count = cell_idx == 0 ? vertex_count : 0;
-        VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), this_vertices, this_vertex_count, indices, indice_count);
-        // draw_node->topology = R_GeoTopologyKind_TriangleStrip;
-        draw_node->topology = R_GeoTopologyKind_Triangles;
-        draw_node->polygon = R_GeoPolygonKind_Fill;
-      }
-    }
-#else
     U32 *indices = 0;
-    for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx++)
+    ProfScope("collect indices") for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx+=3)
     {
       VTK_Cell *cell = &mesh->cells[cell_idx];
 
@@ -576,15 +530,19 @@ vtk_update(void)
         darray_push(vtk_frame_arena(), indices, c);
       }
     }
+#else
+    U64 vertex_count = darray_size(mesh->vertices);
+    R_Geo3D_Vertex *vertices = mesh->vertices;
+    U64 indice_count = darray_size(mesh->indices);
+    U32 *indices = mesh->indices;
+#endif
 
     VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), vertices, vertex_count, indices, darray_size(indices));
     draw_node->topology = R_GeoTopologyKind_Triangles;
     draw_node->polygon = R_GeoPolygonKind_Fill;
-
-#endif
-#endif
   }
 
+  // end&build drawlist
   vtk_drawlist_build(vtk_frame_drawlist());
 
   // drawing
@@ -645,6 +603,7 @@ vtk_update(void)
       // inst->key 
     }
   }
+  ProfEnd();
 }
 
 internal B32
@@ -1185,7 +1144,7 @@ vtk_drawlist_build(VTK_DrawList *drawlist)
 /////////////////////////////////
 //~ Loader Functions
 
-internal VTK_Mesh *
+internal VTK_Mesh
 vtk_mesh_from_vtk(Arena *arena, String8 path)
 {
   Temp scratch = scratch_begin(&arena,1);
@@ -1488,21 +1447,148 @@ vtk_mesh_from_vtk(Arena *arena, String8 path)
   }
 
   // fill&return
-  VTK_Mesh *ret = push_array(arena, VTK_Mesh, 1);
-  ret->kind = mesh_kind;
-  ret->points = points;
-  ret->point_count = point_count;
-  ret->cells = cells;
-  ret->cell_count = cell_count;
-  ret->point_attributes = point_attributes;
+  VTK_Mesh ret = {0};
+  ret.kind = mesh_kind;
+  ret.points = points;
+  ret.point_count = point_count;
+  ret.cells = cells;
+  ret.cell_count = cell_count;
+  ret.point_attributes = point_attributes;
   scratch_end(scratch);
   return ret;
 }
 
-internal VTK_Mesh *
+internal VTK_Mesh
 vtk_mesh_from_ply(Arena *arena, String8 path)
 {
-  NotImplemented;
+  Temp scratch = scratch_begin(&arena,1);
+
+  // read file data
+  OS_Handle file = os_file_open(OS_AccessFlag_Read|OS_AccessFlag_ShareRead, path);
+  FileProperties props = os_properties_from_file(file);
+  String8 data = os_string_from_file_range(scratch.arena, file, r1u64(0, props.size));
+  os_file_close(file);
+
+  U8 *first = data.str;
+  U8 *opl = data.str + data.size;
+  U8 *c = first;
+
+  // skip empty lines
+  for(; c < opl && char_is_space(*c); c++);
+
+  // header
+  int vertex_count = 0;
+  int face_count = 0;
+  String8 line = {0};
+  for(String8 line = vtk_read_line(&c, opl);
+      c < opl && (vertex_count == 0 || face_count == 0);
+      line = vtk_read_line(&c, opl))
+  {
+    if(str8_starts_with(line, str8_lit("element vertex"), 0))
+    {
+      int nread = sscanf((char*)line.str, "%*s %*s %d", &vertex_count);
+      AssertAlways(nread == 1);
+    }
+
+    if(str8_starts_with(line, str8_lit("element face"), 0))
+    {
+      int nread = sscanf((char*)line.str, "%*s %*s %d", &face_count);
+      AssertAlways(nread == 1);
+    }
+  }
+
+  // skip to header end
+  for(String8 line = vtk_read_line(&c, opl);
+      c < opl && str8_match(line, str8_lit("end_header"), 0);
+      line = vtk_read_line(&c, opl));
+
+  U64 point_count = vertex_count;
+  VTK_Point *points = push_array(arena, VTK_Point, point_count);
+  U8 *vertex_bytes = c;
+  c += vertex_count * sizeof(float) * 6;
+  for(U64 vertex_idx = 0; vertex_idx < vertex_count; vertex_idx++)
+  {
+    VTK_Point *point = &points[vertex_idx];
+    float *f = (float*)(vertex_bytes + vertex_idx*(sizeof(float)*6));
+    point->pos.x = f[0];
+    point->pos.y = f[1];
+    point->pos.z = f[2];
+  }
+
+  U64 cell_count = face_count;
+  VTK_Cell *cells = push_array(arena, VTK_Cell, cell_count);
+  U8 *face_bytes_head = c;
+  for(U64 face_idx = 0; face_idx < face_count; face_idx++)
+  {
+    VTK_Cell *cell = &cells[face_idx];
+    U8 n = *(face_bytes_head++);
+    for(U64 i = 0; i < n; i++)
+    {
+      int indice = *((int*)face_bytes_head);
+      face_bytes_head += sizeof(int);
+      darray_push(arena, cell->point_indices, (U32)indice)
+    }
+    cell->point_count = n;
+  }
+
+  scratch_end(scratch);
+  VTK_Mesh ret = {0};
+  ret.kind = VTK_MeshKind_PolyData;
+  ret.points = points;
+  ret.point_count = point_count;
+  ret.cells = cells;
+  ret.cell_count = cell_count;
+  return ret;
+}
+
+internal R_Geo3D_Vertex *
+vtk_vertices_from_mesh(Arena *arena, VTK_Mesh *mesh)
+{
+  U64 vertex_count = mesh->point_count;
+  R_Geo3D_Vertex *vertices = 0;
+  for(U64 vertex_idx = 0; vertex_idx < vertex_count; vertex_idx++)
+  {
+    R_Geo3D_Vertex vertex = {0};
+    vertex.pos = mesh->points[vertex_idx].pos;
+    vertex.pos.y *= -1;
+
+    Vec4F32 color = {1,1,1,0.5};
+    if(mesh->point_attributes)
+    {
+      F32 off = -mesh->point_attributes[0].min;
+      F32 max = mesh->point_attributes[0].max + off;
+      F32 p = mesh->point_attributes[0].scalars[vertex_idx] + off;
+      F32 hot_t = p/max;
+      color = pressure_lut(hot_t);
+    }
+    vertex.col = color;
+    darray_push(arena, vertices, vertex);
+  }
+  return vertices;
+}
+
+internal U32
+*vtk_indices_from_mesh(Arena *arena, VTK_Mesh *mesh)
+{
+  U32 *indices = 0;
+  for(U64 cell_idx = 0; cell_idx < mesh->cell_count; cell_idx++)
+  {
+    VTK_Cell *cell = &mesh->cells[cell_idx];
+
+    // indice
+    U64 indice_count = (cell->point_count-2)*3;
+    // polygon to triangles
+    for(U64 i = 0; i < (cell->point_count-2); i++)
+    {
+      U32 a = cell->point_indices[0];
+      U32 b = cell->point_indices[i + 1];
+      U32 c = cell->point_indices[i + 2];
+      darray_push(arena, indices, a);
+      darray_push(arena, indices, b);
+      darray_push(arena, indices, c);
+    }
+  }
+  return indices;
 }
 
 /////////////////////////////////

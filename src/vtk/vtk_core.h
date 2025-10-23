@@ -267,6 +267,9 @@ struct VTK_Mesh
   VTK_Cell *cells;
   U64 cell_count;
 
+  R_Geo3D_Vertex *vertices; // darray
+  U32 *indices; // darray
+
   VTK_AttributeList *point_attributes;
   U64 point_attribute_count;
 
@@ -357,7 +360,7 @@ struct VTK_State
   } animation;
 
   // FIXME: TESTING
-  VTK_Mesh *mesh;
+  VTK_Mesh *meshes; // darray
 };
 
 /////////////////////////////////
@@ -377,10 +380,10 @@ internal String8 vtk_display_part_from_key_string(String8 string);
 
 internal VTK_Key  vtk_key_from_string(VTK_Key seed, String8 string);
 internal VTK_Key  vtk_key_from_stringf(VTK_Key seed, char* fmt, ...);
-internal B32     vtk_key_match(VTK_Key a, VTK_Key b);
+internal B32      vtk_key_match(VTK_Key a, VTK_Key b);
 internal VTK_Key  vtk_key_make(U64 a, U64 b);
 internal VTK_Key  vtk_key_zero();
-internal Vec2F32 vtk_2f32_from_key(VTK_Key key);
+internal Vec2F32  vtk_2f32_from_key(VTK_Key key);
 internal VTK_Key  vtk_key_from_2f32(Vec2F32 key_2f32);
 
 /////////////////////////////////
@@ -420,8 +423,11 @@ internal void          vtk_drawlist_build(VTK_DrawList *drawlist); /* upload buf
 /////////////////////////////////
 //~ Loader Functions
 
-internal VTK_Mesh *vtk_mesh_from_vtk(Arena *arena, String8 path);
-internal VTK_Mesh *vtk_mesh_from_ply(Arena *arena, String8 path);
+internal VTK_Mesh vtk_mesh_from_vtk(Arena *arena, String8 path);
+internal VTK_Mesh vtk_mesh_from_ply(Arena *arena, String8 path);
+
+internal R_Geo3D_Vertex *vtk_vertices_from_mesh(Arena *arena, VTK_Mesh *mesh);
+internal U32            *vtk_indices_from_mesh(Arena *arena, VTK_Mesh *mesh);
 
 /////////////////////////////////
 //~ Loader Helper Functions
