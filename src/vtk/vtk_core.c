@@ -23,27 +23,26 @@ pressure_lut(F32 t)
 internal F32
 bswap_f32(F32 value)
 {
-    U8 *bytes = (U8 *)&value;
-    U8 swapped_bytes[4];
+  U8 *bytes = (U8 *)&value;
+  U8 swapped_bytes[4];
 
-    // Reverse the byte order
-    for (U64 i = 0; i < 4; i++)
-    {
-        swapped_bytes[i] = bytes[3 - i];
-    }
+  // Reverse the byte order
+  for(U64 i = 0; i < 4; i++)
+  {
+    swapped_bytes[i] = bytes[3 - i];
+  }
 
-    F32 swapped_value;
-    U8 *swapped_ptr = (U8 *)&swapped_value;
+  F32 swapped_value;
+  U8 *swapped_ptr = (U8 *)&swapped_value;
 
-    for (U64 i = 0; i < 4; i++)
-    {
-        swapped_ptr[i] = swapped_bytes[i];
-    }
+  for(U64 i = 0; i < 4; i++)
+  {
+    swapped_ptr[i] = swapped_bytes[i];
+  }
 
-    return swapped_value;
+  return swapped_value;
 }
 
-// FIXME: testing
 internal F64
 bswap_f64(F64 value)
 {
@@ -439,6 +438,37 @@ vtk_update(void)
       rotation = mul_quat_f32(v_q, rotation);
 
       camera->rotation = rotation;
+
+      /////////////////////////////////
+      // WASD
+
+      {
+        F32 speed = 4;
+        speed *= vtk_state->frame_dt;
+
+        Vec3F32 dir = {0,0,0};
+        if(os_key_is_down(OS_Key_W))
+        {
+          dir = f;
+        }
+        if(os_key_is_down(OS_Key_S))
+        {
+          dir = scale_3f32(f, -1);
+        }
+        if(os_key_is_down(OS_Key_A))
+        {
+          dir = scale_3f32(s, -1);
+        }
+        if(os_key_is_down(OS_Key_D))
+        {
+          dir = s;
+        }
+        if(os_key_is_down(OS_Key_Space))
+        {
+          dir = scale_3f32(u, -1);
+        }
+        camera->position = add_3f32(camera->position, scale_3f32(dir, speed));
+      }
     }
 
     // Scroll
@@ -548,7 +578,6 @@ vtk_update(void)
     }
 
     VTK_DrawNode *draw_node = vtk_drawlist_push(vtk_frame_arena(), vtk_frame_drawlist(), vertices, vertex_count, indices, darray_size(indices));
-    // draw_node->topology = R_GeoTopologyKind_TriangleStrip;
     draw_node->topology = R_GeoTopologyKind_Triangles;
     draw_node->polygon = R_GeoPolygonKind_Fill;
 
